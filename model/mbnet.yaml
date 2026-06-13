@@ -1,6 +1,6 @@
 # YOLOv8 Standard avec adaptations MobileNetV3
 
-nc: 38 # Nombre de classes
+nc: 5 # Nombre de classes
 
 scales:
   n: [0.33, 0.25, 1024]

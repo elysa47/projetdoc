@@ -2,6 +2,8 @@ import torch
 from pathlib import Path
 import argparse
 import sys
+import glob
+import os
 
 print("="*70)
 print("🔧 ENREGISTRAMENTO DOS MÓDULOS")
@@ -128,17 +130,53 @@ print("="*70)
 print("⏳ CARREGAMENTO DO MODELO")
 print("="*70 + "\n")
 
-# Chemin du checkpoint pour la reprise
-checkpoint_path = Path('runs/detect/yolov8_mobilenetv3/weights/last.pt')
+# Recherche automatique du dernier checkpoint valide
+def find_latest_checkpoint():
+    checkpoint_list = glob.glob('runs/detect/yolov8_mobilenetv3*/weights/last.pt')
+    if not checkpoint_list:
+        return None
+    
+    # Trier par date de modification pour avoir le plus récent
+    latest_ckpt = max(checkpoint_list, key=os.path.getmtime)
+    return latest_ckpt
+
+checkpoint_path = find_latest_checkpoint()
 
 try:
-    if args.resume and checkpoint_path.exists():
+    if args.resume and checkpoint_path:
         print(f"🔄 Tentativa de retomada do checkpoint: {checkpoint_path}")
+        # Vérification rapide du nc pour éviter les erreurs de mismatch
+        try:
+            ckpt_data = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+            ckpt_nc = ckpt_data.get('ema', ckpt_data.get('model')).nc
+            print(f"📊 Checkpoint détecté avec nc={ckpt_nc}")
+            if ckpt_nc != 5: # On sait que le dataset actuel a nc=5
+                 print(f"⚠️ ATTENTION: Le checkpoint {checkpoint_path} a nc={ckpt_nc} mais custom_data.yaml a nc=5.")
+                 print(f"⚠️ La reprise risque d'échouer. Recherche d'un autre checkpoint...")
+                 # On pourrait filtrer ici pour trouver un checkpoint avec nc=5
+                 valid_checkpoints = []
+                 for cp in glob.glob('runs/detect/yolov8_mobilenetv3*/weights/last.pt'):
+                     try:
+                         d = torch.load(cp, map_location='cpu', weights_only=False)
+                         if (d.get('ema') or d.get('model')).nc == 5:
+                             valid_checkpoints.append(cp)
+                     except: continue
+                 
+                 if valid_checkpoints:
+                     checkpoint_path = max(valid_checkpoints, key=os.path.getmtime)
+                     print(f"✅ Nouveau checkpoint trouvé: {checkpoint_path}")
+                 else:
+                     print(f"❌ Aucun checkpoint avec nc=5 trouvé. Reprise impossible.")
+                     checkpoint_path = None
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la vérification du checkpoint: {e}")
+
+    if args.resume and checkpoint_path:
         model = YOLO(str(checkpoint_path))
         is_resume = True
     else:
         if args.resume:
-            print(f"⚠️ Checkpoint não encontrado em {checkpoint_path}. Iniciando do zero.")
+            print(f"⚠️ Checkpoint valide non trouvé. Iniciando do zero.")
         print(f"🆕 Iniciando novo treinamento com {yaml_path}")
         model = YOLO(str(yaml_path))
         is_resume = False
@@ -169,7 +207,8 @@ try:
         verbose=True,
         name='yolov8_mobilenetv3',
         project='runs/detect',
-        resume=is_resume
+        resume=is_resume,
+        exist_ok=True # Permet de continuer dans le même dossier si possible
     )
     
     print("\n" + "="*70)
